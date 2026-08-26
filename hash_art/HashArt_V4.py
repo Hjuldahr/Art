@@ -1,18 +1,20 @@
 import datetime
-from math import log2
 from pathlib import Path
 import time
+from numba import jit
 
 import numpy as np
 import xxhash
 from PIL import Image, ExifTags
 from secrets import token_bytes
 
+@jit
 def get_neighbors(row: int, col: int, height: int, width: int, pixels: np.ndarray):
     ya = (height - 1 if row == 0 else row - 1, row, 0 if row == height - 1 else row + 1)
     xa = (width - 1 if col == 0 else col - 1, col, 0 if col == width - 1 else col + 1)
     return pixels[np.ix_(ya, xa)]
 
+@jit
 def compare_neighbors(
     centre: np.ndarray,
     neighbors: np.ndarray,
@@ -40,16 +42,19 @@ def derive_seed(seed_material: str | bytes) -> bytes:
         seed_material = seed_material.encode()
     return xxhash.xxh128(seed_material).digest()
 
+@jit
 def hash_to_rgb(digest: bytes) -> np.ndarray:
     return np.frombuffer(digest, dtype=np.uint8, count=15).reshape(5, 3).sum(
         axis=0,
         dtype=np.uint8,
     )
 
+@jit
 def next_hash(prev_hash: bytes, nonce: int) -> bytes:
     """Next chain link: xxh128(prev_hash || str(nonce))."""
     return xxhash.xxh128(prev_hash + nonce.to_bytes(8)).digest()
 
+@jit
 def mine_pixel(
     neighbors: np.ndarray, prev_hash: bytes, max_distance: float, nonce_start: int = 1, nonce_step: int = 1
 ) -> tuple[bytes, np.ndarray]:
@@ -113,44 +118,71 @@ def save_output(et: float, size: tuple[int, int], mined_hash: bytes, brief: str,
     print(f"Mined image has been saved to disk at: {out_path}")
     img.show()
 
-def z_traverse(width, height, *, col_first=False):
-    if not col_first:
-        for row in range(0, height, 2):
-            for col in range(width):
-                yield row, col
-            
-            if row + 1 < height:
-                for col in range(width - 1, -1, -1):
-                    yield row + 1, col
-    else:
-        for col in range(0, width, 2):
-            for row in range(height):
-                yield row, col
-            
-            if col + 1 < width:
-                for row in range(height - 1, -1, -1):
-                    yield row, col + 1
-
-if __name__ == '__main__':
-    SCALE = 4
-    WIDTH = 1_080 #1_920
-    HEIGHT = 1_080
-    SIGMA = 25
+@jit
+def contra_diagonal_traverse(width, height):
+    num_diagonals = width + height - 1
     
-    width, height = WIDTH // SCALE, HEIGHT // SCALE
+    for d in range(num_diagonals):
+        # Even diagonals: Sweep DOWN and LEFT
+        if d % 2 == 0:
+            # Row starts at 0, unless d exceeds the available column indices
+            r = 0 if d < width else d - width + 1
+            # Column starts at d, but cannot exceed the maximum width index
+            c = d if d < width else width - 1
+            
+            # Bound checking must look at both constraints simultaneously
+            while r < height and c >= 0:
+                yield r, c
+                r += 1
+                c -= 1
+                
+        # Odd diagonals: Sweep UP and RIGHT
+        else:
+            # Row starts at d, but cannot exceed the maximum height index
+            r = d if d < height else height - 1
+            # Column starts at 0, unless d exceeds the available row indices
+            c = 0 if d < height else d - height + 1
+            
+            # Bound checking must look at both constraints simultaneously
+            while r >= 0 and c < width:
+                yield r, c
+                r -= 1
+                c += 1
+
+@jit
+def mine(width, height, pixels, distance_limits):
+    _get_neighbors = get_neighbors
+    _mine_pixel = mine_pixel
+    
+    for row, col in contra_diagonal_traverse(width, height):
+        max_distance = distance_limits[row, col]
+        neighbors = _get_neighbors(row, col, height, width, pixels)
+        mined_hash, rgb, nonces = _mine_pixel(
+            neighbors=neighbors, 
+            prev_hash=mined_hash, 
+            max_distance=max_distance
+        )
+        pixels[row, col] = rgb
+        total_nonces += nonces
+        
+        if row == col:
+            print(f'{row}/{height} {row / height:0.1%}')
+
+def main(scale = 4, width = 1080, height = 1080, sigma = 25):
+    scaled_width, scaled_height = width // scale, height // scale
         
     initial_seed = derive_seed(token_bytes(32))
     mined_hash = initial_seed  # Keep track of running hash variations
     
     rng = np.random.default_rng(seed=int.from_bytes(initial_seed))
-    distance_limits = rng.exponential(2 * SIGMA ** 2, (height, width)).astype(np.uint32)
+    distance_limits = rng.exponential(2 * sigma ** 2, (height, width)).astype(np.uint32)
     
     pixels = np.zeros((height, width, 3), dtype=np.uint8)
     
     brief = (
         f"- Seed hash vein: xxh128[{initial_seed.hex(':')}]\r\n"
         f"- Total being mined: {height * width:,d} px\r\n"
-        f"- Post mining upscale factor: x{SCALE}\r\n"
+        f"- Post mining upscale factor: x{scale}\r\n"
     )
     
     start_prompt(brief)
@@ -158,23 +190,13 @@ if __name__ == '__main__':
     total_nonces = 0
     
     try:
-        for row, col in z_traverse(width, height):
-            max_distance = distance_limits[row, col]
-            neighbors = get_neighbors(row, col, height, width, pixels)
-            mined_hash, rgb, nonces = mine_pixel(
-                neighbors=neighbors, 
-                prev_hash=mined_hash, 
-                max_distance=max_distance
-            )
-            pixels[row, col] = rgb
-            total_nonces += nonces
-            
+        mine(width, height, pixels, distance_limits)
         et = time.time()
         
         review = f'- Time Elapsed: {et - st:.2f}s\r\n- Nonces Searched: {total_nonces:,d}'
         print(f'Mining complete.\n{review}')
                 
-        save_output(et, (WIDTH, HEIGHT), mined_hash, brief, review, pixels)
+        save_output(et, (width, height), mined_hash, brief, review, pixels)
     
     except KeyboardInterrupt:
         et = time.time() 
@@ -183,6 +205,6 @@ if __name__ == '__main__':
         print(f"Mining aborted at {p:.2%} progress\nTime elapsed: {et - st:,.2f}s\nMined image will not be saved to disk.")
     
         Image.fromarray(pixels, 'RGB').show()
-    
-    et = time.time() 
-    print(f'Finished Mining.\nTime Elapsed: {et - st:0.2f}s')
+
+if __name__ == '__main__':
+    main()

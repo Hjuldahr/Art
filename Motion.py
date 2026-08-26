@@ -1,5 +1,5 @@
 from __future__ import annotations
-from PIL import Image, ImageSequence, ImageFilter
+from PIL import Image, ImageFilter
 import av
 import numpy as np
 

@@ -1,25 +1,17 @@
-import datetime
+from datetime import datetime
 from pathlib import Path
 import time
-from numba import jit
-
 import numpy as np
 import xxhash
-from PIL import Image, ExifTags
+from PIL import Image
 from secrets import token_bytes
 
-@jit
 def get_neighbors(row: int, col: int, height: int, width: int, pixels: np.ndarray):
     ya = (height - 1 if row == 0 else row - 1, row, 0 if row == height - 1 else row + 1)
     xa = (width - 1 if col == 0 else col - 1, col, 0 if col == width - 1 else col + 1)
     return pixels[np.ix_(ya, xa)]
 
-@jit
-def compare_neighbors(
-    centre: np.ndarray,
-    neighbors: np.ndarray,
-    max_distance: int,
-):
+def compare_neighbors(centre: np.ndarray, neighbors: np.ndarray, max_distance: int):
     mask = np.any(neighbors != 0, axis=-1)
     
     if not np.any(mask):
@@ -35,32 +27,21 @@ def compare_neighbors(
 
     return bool(np.all(distances <= max_distance))
 
-RGB_MODULUS = 256
-
-def derive_seed(seed_material: str | bytes) -> bytes:
+def derive_seed(seed_material: str | bytes):
     if isinstance(seed_material, str):
         seed_material = seed_material.encode()
     return xxhash.xxh128(seed_material).digest()
 
-@jit
-def hash_to_rgb(digest: bytes) -> np.ndarray:
+def hash_to_rgb(digest: bytes):
     return np.frombuffer(digest, dtype=np.uint8, count=15).reshape(5, 3).sum(
         axis=0,
         dtype=np.uint8,
     )
 
-@jit
-def next_hash(prev_hash: bytes, nonce: int) -> bytes:
-    """Next chain link: xxh128(prev_hash || str(nonce))."""
-    return xxhash.xxh128(prev_hash + nonce.to_bytes(8)).digest()
+def next_hash(prev_hash: bytes, nonce: int):
+    return xxhash.xxh128(prev_hash + nonce.to_bytes(8, 'little')).digest()
 
-@jit
-def mine_pixel(
-    neighbors: np.ndarray, prev_hash: bytes, max_distance: float, nonce_start: int = 1, nonce_step: int = 1
-) -> tuple[bytes, np.ndarray]:
-    """
-    Search nonces until the example neighbor rule accepts a color.
-    """
+def mine_pixel(neighbors, prev_hash, max_distance, nonce_start = 1, nonce_step = 1):
     relaxation = 0
     nonce = nonce_start
     new_hash = next_hash(prev_hash, nonce)
@@ -74,7 +55,7 @@ def mine_pixel(
         # as two neighbors might be far apart enough that their acceptance radii don't overlap
         relaxation += 1 
         
-    return new_hash, centre, nonce
+    return new_hash, centre
 
 def start_prompt(brief: str):
     print(f"Pre Mining Brief\n{brief}")
@@ -83,43 +64,7 @@ def start_prompt(brief: str):
     except KeyboardInterrupt:
         exit(0)
 
-def save_output(et: float, size: tuple[int, int], mined_hash: bytes, brief: str, review: str, pixels: np.ndarray):
-    script_path = Path(__file__)
-    
-    # format timestamps
-    generation_time = datetime.fromtimestamp(et)
-    exif_time_string = generation_time.strftime("%Y:%m:%d %H:%M:%S")
-    file_timestamp = generation_time.strftime("%Y%m%d_%H%M%S")
-    
-    # format label
-    title_string = f"{file_timestamp}_hash_art_sync_v3.1_{mined_hash.hex()}"
-    description_string = f"{brief}\r\n{review}"
-    
-    img = Image.fromarray(pixels, 'RGB').resize(size, Image.Resampling.NEAREST)  
-            
-    # add metadata sugar
-    exif_data = img.getexif()
-    exif_data[ExifTags.Base.Artist] = "Nioureux"
-    exif_data[ExifTags.Base.Software] = script_path.name  
-    exif_data[ExifTags.Base.DateTime] = exif_time_string          
-    exif_data[ExifTags.Base.DateTimeOriginal] = exif_time_string  
-    exif_data[ExifTags.Base.DateTimeDigitized] = exif_time_string 
-    exif_data[ExifTags.Base.ImageDescription] = f"{title_string}\r\n{description_string}"
-    # Override fields to cleanup representation on windows machines specifically 
-    # (uses a split field which looks ugly when duplicated)
-    exif_data[ExifTags.Base.XPTitle] = title_string.encode('utf-16le')
-    exif_data[ExifTags.Base.XPSubject] = description_string.replace("\r", "").replace("\n", "; ").encode('utf-16le')
-    
-    out_path = script_path.parent / 'Generated Images' / f"{title_string}.jpg"
-    out_path.parent.mkdir(exist_ok=True)
-
-    img.save(out_path, "jpeg", exif=exif_data, quality=85)
-    
-    print(f"Mined image has been saved to disk at: {out_path}")
-    img.show()
-
-@jit
-def contra_diagonal_traverse(width, height):
+def contra_diagonal_traverse(height, width):
     num_diagonals = width + height - 1
     
     for d in range(num_diagonals):
@@ -149,54 +94,73 @@ def contra_diagonal_traverse(width, height):
                 r -= 1
                 c += 1
 
-@jit
-def mine(width, height, pixels, distance_limits):
+def mine(height, width, pixels, mined_hash, distance_limits):
     _get_neighbors = get_neighbors
     _mine_pixel = mine_pixel
     
-    for row, col in contra_diagonal_traverse(width, height):
+    area = width * height
+    report_interval = area // 10
+    
+    for i, (row, col) in enumerate(contra_diagonal_traverse(height, width)):
         max_distance = distance_limits[row, col]
         neighbors = _get_neighbors(row, col, height, width, pixels)
-        mined_hash, rgb, nonces = _mine_pixel(
+        mined_hash, rgb = _mine_pixel(
             neighbors=neighbors, 
             prev_hash=mined_hash, 
             max_distance=max_distance
         )
         pixels[row, col] = rgb
-        total_nonces += nonces
         
-        if row == col:
-            print(f'{row}/{height} {row / height:0.1%}')
+        if i % report_interval == 0:
+            print(f'{i:,}/{area:,} {row / area:0.2%}')
 
-def main(scale = 4, width = 1080, height = 1080, sigma = 25):
+def save_output(et: float, size: tuple[int, int], initial_hash: bytes, brief: str, review: str, pixels: np.ndarray):
+    script_path = Path(__file__)
+    
+    # format timestamps
+    generation_time = datetime.fromtimestamp(et)
+    file_timestamp = generation_time.strftime("%Y%m%d_%H%M%S")
+    
+    # format label
+    title_string = f"{file_timestamp}_hash_art_sync_v3.1_{initial_hash.hex()}"
+    
+    img = Image.fromarray(pixels, 'RGB').resize(size, Image.Resampling.NEAREST)  
+
+    out_path = script_path.parent / 'Generated Images' / f"{title_string}.jpg"
+    out_path.parent.mkdir(exist_ok=True)
+
+    img.save(out_path, "jpeg", quality=85)
+    
+    print(f"Mined image has been saved to disk at: {out_path}")
+    img.show()
+
+def main(scale = 4, width = 1080, height = 1080, sigma = 50):
     scaled_width, scaled_height = width // scale, height // scale
         
-    initial_seed = derive_seed(token_bytes(32))
-    mined_hash = initial_seed  # Keep track of running hash variations
+    initial_hash = derive_seed(token_bytes(32))
     
-    rng = np.random.default_rng(seed=int.from_bytes(initial_seed))
-    distance_limits = rng.exponential(2 * sigma ** 2, (height, width)).astype(np.uint32)
+    rng = np.random.default_rng(seed=int.from_bytes(initial_hash, 'little'))
+    distance_limits = rng.exponential(2 * sigma ** 2, (scaled_height, scaled_width)).astype(np.uint32)
     
-    pixels = np.zeros((height, width, 3), dtype=np.uint8)
+    pixels = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
     
     brief = (
-        f"- Seed hash vein: xxh128[{initial_seed.hex(':')}]\r\n"
-        f"- Total being mined: {height * width:,d} px\r\n"
+        f"- Seed hash vein: xxh128[{initial_hash.hex(':')}]\r\n"
+        f"- Total being mined: {scaled_height * scaled_width:,d} px\r\n"
         f"- Post mining upscale factor: x{scale}\r\n"
     )
     
     start_prompt(brief)
     st = time.time()
-    total_nonces = 0
     
     try:
-        mine(width, height, pixels, distance_limits)
+        mine(scaled_height, scaled_width, pixels, initial_hash, distance_limits)
         et = time.time()
         
-        review = f'- Time Elapsed: {et - st:.2f}s\r\n- Nonces Searched: {total_nonces:,d}'
+        review = f'- Time Elapsed: {et - st:.2f}s'
         print(f'Mining complete.\n{review}')
                 
-        save_output(et, (width, height), mined_hash, brief, review, pixels)
+        save_output(et, (width, height), initial_hash, brief, review, pixels)
     
     except KeyboardInterrupt:
         et = time.time() 

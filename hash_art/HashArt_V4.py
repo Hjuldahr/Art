@@ -64,35 +64,30 @@ def start_prompt(brief: str):
     except KeyboardInterrupt:
         exit(0)
 
-def contra_diagonal_traverse(height, width):
-    num_diagonals = width + height - 1
-    
-    for d in range(num_diagonals):
-        # Even diagonals: Sweep DOWN and LEFT
-        if d % 2 == 0:
-            # Row starts at 0, unless d exceeds the available column indices
-            r = 0 if d < width else d - width + 1
-            # Column starts at d, but cannot exceed the maximum width index
-            c = d if d < width else width - 1
-            
-            # Bound checking must look at both constraints simultaneously
-            while r < height and c >= 0:
-                yield r, c
-                r += 1
-                c -= 1
-                
-        # Odd diagonals: Sweep UP and RIGHT
-        else:
-            # Row starts at d, but cannot exceed the maximum height index
-            r = d if d < height else height - 1
-            # Column starts at 0, unless d exceeds the available row indices
-            c = 0 if d < height else d - height + 1
-            
-            # Bound checking must look at both constraints simultaneously
-            while r >= 0 and c < width:
-                yield r, c
-                r -= 1
-                c += 1
+def spiral_traverse(height, width):
+    top = 0
+    bottom = height - 1
+    left = 0
+    right = width - 1
+
+    while top <= bottom and left <= right:
+        for col in range(left, right + 1):
+            yield top, col
+        top += 1
+
+        for row in range(top, bottom + 1):
+            yield row, right
+        right -= 1
+
+        if top <= bottom:
+            for col in range(right, left - 1, -1):
+                yield bottom, col
+            bottom -= 1
+
+        if left <= right:
+            for row in range(bottom, top - 1, -1):
+                yield row, left
+            left += 1
 
 def mine(height, width, pixels, mined_hash, distance_limits):
     _get_neighbors = get_neighbors
@@ -101,7 +96,7 @@ def mine(height, width, pixels, mined_hash, distance_limits):
     area = width * height
     report_interval = area // 10
     
-    for i, (row, col) in enumerate(contra_diagonal_traverse(height, width)):
+    for i, (row, col) in enumerate(spiral_traverse(height, width)):
         max_distance = distance_limits[row, col]
         neighbors = _get_neighbors(row, col, height, width, pixels)
         mined_hash, rgb = _mine_pixel(
@@ -112,7 +107,7 @@ def mine(height, width, pixels, mined_hash, distance_limits):
         pixels[row, col] = rgb
         
         if i % report_interval == 0:
-            print(f'{i:,}/{area:,} {row / area:0.2%}')
+            print(f'{i:,}/{area:,} {i / area:0.2%}')
 
 def save_output(et: float, size: tuple[int, int], initial_hash: bytes, brief: str, review: str, pixels: np.ndarray):
     script_path = Path(__file__)
@@ -122,7 +117,7 @@ def save_output(et: float, size: tuple[int, int], initial_hash: bytes, brief: st
     file_timestamp = generation_time.strftime("%Y%m%d_%H%M%S")
     
     # format label
-    title_string = f"{file_timestamp}_hash_art_sync_v3.1_{initial_hash.hex()}"
+    title_string = f"{file_timestamp}_hash_art_sync_v4_{initial_hash.hex()}"
     
     img = Image.fromarray(pixels, 'RGB').resize(size, Image.Resampling.NEAREST)  
 
@@ -171,4 +166,4 @@ def main(scale = 4, width = 1080, height = 1080, sigma = 50):
         Image.fromarray(pixels, 'RGB').show()
 
 if __name__ == '__main__':
-    main()
+    main(width=800, height=800, scale=8)

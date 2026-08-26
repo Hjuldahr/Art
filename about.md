@@ -1,0 +1,4 @@
+I was debating for a while if I should submit this to version control or not.
+While I wouldn't be ruined without this, in fact it might be a good thing to start from a clean slate with proper subproject organization, but it would be disappointing from a sentimentality perspective.
+I didn't strictly need to make this public, as some of these older scripts are amateurish (I would like to think I improved since starting this); some of the newer ones are AI-assisted (as in refining the algorithm rather than coming up with project ideas), and I wouldn't necessarily call these resume-worthy, unlike my other projects, but if someone wants to copy one of these scripts and extend or improve it for their own use, it's fine so long as it's strictly not for profit or AI training.
+There are some more ambitious ideas I had, particularly when it comes to 3D renders, but I will need to do research on my options to step beyond PIL.

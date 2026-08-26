@@ -113,6 +113,24 @@ def save_output(et: float, size: tuple[int, int], mined_hash: bytes, brief: str,
     print(f"Mined image has been saved to disk at: {out_path}")
     img.show()
 
+def z_traverse(width, height, *, col_first=False):
+    if not col_first:
+        for row in range(0, height, 2):
+            for col in range(width):
+                yield row, col
+            
+            if row + 1 < height:
+                for col in range(width - 1, -1, -1):
+                    yield row + 1, col
+    else:
+        for col in range(0, width, 2):
+            for row in range(height):
+                yield row, col
+            
+            if col + 1 < width:
+                for row in range(height - 1, -1, -1):
+                    yield row, col + 1
+
 if __name__ == '__main__':
     SCALE = 4
     WIDTH = 1_080 #1_920
@@ -140,19 +158,16 @@ if __name__ == '__main__':
     total_nonces = 0
     
     try:
-        for row in range(height):
-            for col in range(width):
-                max_distance = distance_limits[row, col]
-                neighbors = get_neighbors(row, col, height, width, pixels)
-                mined_hash, rgb, nonces = mine_pixel(
-                    neighbors=neighbors, 
-                    prev_hash=mined_hash, 
-                    max_distance=max_distance
-                )
-                pixels[row, col] = rgb
-                total_nonces += nonces
-                
-            print(f'{row}/{height} {row / height:0.1%}')
+        for row, col in z_traverse(width, height):
+            max_distance = distance_limits[row, col]
+            neighbors = get_neighbors(row, col, height, width, pixels)
+            mined_hash, rgb, nonces = mine_pixel(
+                neighbors=neighbors, 
+                prev_hash=mined_hash, 
+                max_distance=max_distance
+            )
+            pixels[row, col] = rgb
+            total_nonces += nonces
             
         et = time.time()
         

@@ -1,3 +1,4 @@
+from pathlib import Path
 import random
 from PIL import Image
 
@@ -99,6 +100,9 @@ line_width = 3
 min_coloured_cells = 6
 max_coloured_cells = 8
 
+root = Path(__file__).parent / "Generated Images" / "piet"
+root.mkdir(exist_ok=True)
+
 for i in range(1, batch_size + 1):
     print(i)
     
@@ -109,4 +113,5 @@ for i in range(1, batch_size + 1):
     
     image = generate_lines(size, lines, line_width, coloured_cells)
     image = image.resize((img_size * rx * upscale_factor, img_size * ry * upscale_factor), Image.NEAREST)
-    image.save(f"./Art/Generated Images/piet/piet_{i}.jpg")
+    
+    image.save(root / f"piet_{i}.jpg", 'jpeg')

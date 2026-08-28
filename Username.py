@@ -1,7 +1,7 @@
 import math
 import unicodedata
 import colorsys
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 BIT_LENGTH = 12
 HEX_BASE = 0xFF  

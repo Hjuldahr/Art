@@ -1,4 +1,3 @@
-import math
 from PIL import Image, ImageDraw
 
 UPSCALE = 2

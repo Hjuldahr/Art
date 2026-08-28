@@ -1,5 +1,4 @@
 import math
-import time
 import random
 import colorsys
 from PIL import Image, ImageDraw

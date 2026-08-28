@@ -1,5 +1,4 @@
 import os
-import random
 from PIL import Image
 
 def read_bayer_csv_file(file_name):

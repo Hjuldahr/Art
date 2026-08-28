@@ -3,8 +3,8 @@ import math
 import numpy as np
 from PIL import Image
 import matplotlib.colors as mplcolors
-
 from perlin_noise import PerlinNoise
+
 noise_gen = PerlinNoise(octaves=3)
 
 # --- Config ---

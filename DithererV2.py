@@ -2,7 +2,6 @@ import math
 import os
 import random
 from PIL import Image
-import numpy as np
 #import imageio
 
 #def save_as_mp4(frames, out_path, fps=30):

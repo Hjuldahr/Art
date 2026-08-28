@@ -1,5 +1,4 @@
 import colorsys
-import matplotlib.cm as cm
 from pathlib import Path
 import uuid
 from PIL import Image

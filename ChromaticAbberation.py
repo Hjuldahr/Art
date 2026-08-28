@@ -1,6 +1,5 @@
 import math
 import os
-import random
 from PIL import Image
 
 def process(pixels, width, height, offsets):

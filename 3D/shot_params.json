@@ -1,7 +1,7 @@
 [
     {
         "input_filename": "034c6205df3965925dabf345510e2325.jpg",
-        "output_file_pattern": "%_woman_turnaround.png",
+        "output_file_pattern": "shot_%.png",
         "x_offset": -4,
         "y_offset": 40,
         "frame_width": 180,

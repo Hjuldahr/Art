@@ -64,7 +64,7 @@ meta, raw_shot_params = data
 
 # Extract clean global parameters directly from the JSON metadata dictionary
 in_file = root / 'sources' / meta['input_filename']
-out_file_pattern = root / 'results' / meta['output_file_pattern']
+out_file_pattern = root / 'sequence frames' / meta['output_file_pattern']
 out_file_pattern.parent.mkdir(exist_ok=True, parents=True)
 out_file_pattern_str = str(out_file_pattern)
 
@@ -78,7 +78,7 @@ image_source = Image.open(in_file).convert('RGB')
 shot_params = [ShotParams(**sp) for sp in raw_shot_params]
 
 for i, sp in enumerate(shot_params):
-    label = f'{i};{sp.cam_yaw};{sp.cam_pitch}'
+    label = f'{i}_{sp.cam_yaw}_{sp.cam_pitch}'
     
     # Process the crop strictly tracking your explicit config metrics
     shot_image = manual_center_crop(

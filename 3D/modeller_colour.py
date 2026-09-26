@@ -17,8 +17,8 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
     
     # FIX: Select index [0] from the split stem array to allow proper list sorting
     frame_files = sorted(
-        list(frames_dir.glob("*_woman_turnaround.png")), 
-        key=lambda p: int(p.stem.split('_')[0].split(';')[0])
+        frames_dir.glob("shot_*.png"), 
+        key=lambda p: int(p.stem.split('_')[1].split(';')[0])
     )
     
     if not frame_files:
@@ -60,7 +60,7 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
     for frame_path in frame_files:
         try:
             # Unpack your precise filename coordinate markers (Index; Yaw; Pitch)
-            i, yaw, pitch = frame_path.stem.split("_")[0].split(';')
+            i, yaw, pitch = frame_path.stem.split("_")[1].split(';')
             i, yaw, pitch = int(i), int(yaw), int(pitch)
         except (IndexError, ValueError):
             print(f" [SKIPPED] Cannot parse angle markers from filename: {frame_path.name}")

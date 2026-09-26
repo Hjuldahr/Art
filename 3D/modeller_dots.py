@@ -17,10 +17,10 @@ def get_ai_silhouette(frame_path):
     _, binary_mask = cv2.threshold(alpha, 10, 1, cv2.THRESH_BINARY)
     return binary_mask
 
-def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256, camera_distance=4.0):
+def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256, thickness_scalar=1.3):
     """
-    Advanced Space Carving Engine using true 3D perspective projection matrices.
-    Calibrated to map explicit pixel cropping offsets safely into 3D camera space.
+    3D Voxel Carving Engine with independent thickness calibration.
+    thickness_scalar: Increase (e.g., 1.5) to widen, decrease (e.g., 1.0) to narrow.
     """
     frames_dir = Path(frames_dir)
     
@@ -33,20 +33,16 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256, ca
         print("[ERROR] No angle images found inside the target directory!")
         return
 
-    # Dimensions matched to your configuration profile
     FRAME_W = 180
     FRAME_H = 400
-    X_OFFSET = -4.0   
-    Y_OFFSET = 40.0   
-    
     aspect_ratio = FRAME_H / FRAME_W 
 
     grid_res_x = base_resolution
     grid_res_z = base_resolution
     grid_res_y = int(base_resolution * aspect_ratio)  
 
-    print(f"Processing {len(frame_files)} files with 3D camera matrix mapping.")
-    print(f"Aspect Ratio: {aspect_ratio:.3f} | Matrix Grid: {grid_res_x}x{grid_res_y}x{grid_res_z}")
+    print(f"Processing {len(frame_files)} files.")
+    print(f"Aspect Ratio: {aspect_ratio:.3f} | Grid Size: {grid_res_x}x{grid_res_y}x{grid_res_z}")
     
     voxel_matrix = np.ones((grid_res_x, grid_res_y, grid_res_z), dtype=bool)
     
@@ -55,14 +51,11 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256, ca
     color_B = np.zeros_like(voxel_matrix, dtype=np.float32)
     view_count = np.zeros_like(voxel_matrix, dtype=np.int32)
 
-    # Define standard proportional 3D space tracking bounds
-    lin_x = np.linspace(-1.0, 1.0, grid_res_x)
+    # Spatial mapping scaled explicitly by the thickness modifier
+    lin_x = np.linspace(-1.0, 1.0, grid_res_x) * thickness_scalar
     lin_y = np.linspace(-aspect_ratio, aspect_ratio, grid_res_y)
-    lin_z = np.linspace(-1.0, 1.0, grid_res_z)
+    lin_z = np.linspace(-1.0, 1.0, grid_res_z) * thickness_scalar
     X, Y, Z = np.meshgrid(lin_x, lin_y, lin_z, indexing='ij')
-    
-    # Flatten the 3D grid points into a 4D homogeneous matrix coordinate tracking array [X, Y, Z, 1]
-    points_3d = np.vstack([X.ravel(), Y.ravel(), Z.ravel(), np.ones(X.size)])
 
     for frame_path in frame_files:
         try:
@@ -78,73 +71,39 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256, ca
         h, w, _ = img.shape
         binary_mask_clean = get_ai_silhouette(str(frame_path))
 
-        # 1. CAMERA INTRINSICS MATRIX (K): Sets the focal length and integrates your pixel offsets
-        focal_length = max(w, h) * 1.5  
-        K = np.array([
-            [focal_length, 0, (w / 2.0) + X_OFFSET],
-            [0, focal_length, (h / 2.0) - Y_OFFSET],
-            [0, 0, 1.0]
-        ], dtype=float)
-
-        # 2. CAMERA EXTRINSICS (R, T): Maps turntable sphere coordinates
         yaw_rad = np.radians(yaw)
         pitch_rad = np.radians(pitch)
         
-        # Calculate camera's 3D spatial position relative to the turntable rotation center
-        cx = camera_distance * np.cos(pitch_rad) * np.cos(yaw_rad)
-        cy = camera_distance * np.cos(pitch_rad) * np.sin(yaw_rad)
-        cz = camera_distance * np.sin(pitch_rad)
-        camera_pos = np.array([cx, cy, cz])
+        cos_y, sin_y = np.cos(yaw_rad), np.sin(yaw_rad)
+        cos_p, sin_p = np.cos(pitch_rad), np.sin(pitch_rad)
         
-        # Orient the camera to lock its gaze directly on the 3D world origin
-        target = np.array([0.0, 0.0, 0.0])
-        forward = target - camera_pos
-        forward /= np.linalg.norm(forward)
-        
-        tmp_up = np.array([0.0, 1.0, 0.0]) # Y-axis tracks vertical height
-        right = np.cross(forward, tmp_up)
-        right /= np.linalg.norm(right)
-        up = np.cross(right, forward)
-        
-        # Construct transformation projection matrix [R | t]
-        R = np.vstack([right, up, -forward])
-        t = -R @ camera_pos
-        Rt = np.column_stack([R, t])
-        
-        # Complete full 3D to 2D projection matrix calculation (P = K * [R | t])
-        P = K @ Rt
+        # Robust orthographic tracking matrix math
+        rotated_X = X * cos_y - Z * sin_y
+        rotated_Z = X * sin_y + Z * cos_y
+        rotated_Y = Y
 
-        # 3. BACK-PROJECTION AND SPACE CARVING LOOP
-        pts_2d_homo = P @ points_3d
-        pixel_x_flat = (pts_2d_homo[0] / pts_2d_homo[2]).astype(np.int32)
-        pixel_y_flat = (pts_2d_homo[1] / pts_2d_homo[2]).astype(np.int32)
+        pitched_X = rotated_X
+        pitched_Y = rotated_Y * cos_p + rotated_Z * sin_p   
 
-        # Safety envelope validation checks
-        in_bounds = (pixel_x_flat >= 0) & (pixel_x_flat < w) & (pixel_y_flat >= 0) & (pixel_y_flat < h)
-        
-        pixel_occupied = np.zeros(X.size, dtype=bool)
-        pixel_occupied[in_bounds] = binary_mask_clean[pixel_y_flat[in_bounds], pixel_x_flat[in_bounds]] == 1
-        
-        # Update the 3D Voxel Grid array status
-        voxel_matrix_flat = voxel_matrix.ravel()
-        voxel_matrix_flat &= pixel_occupied
+        pixel_x = ((pitched_X + 1) * 0.5 * (w - 1)).astype(np.int32)
+        pixel_y = (((-pitched_Y + 1) * 0.5) * (h - 1)).astype(np.int32)
 
-        # Sample and blend texture vertex colors safely
-        color_R_flat = color_R.ravel()
-        color_G_flat = color_G.ravel()
-        color_B_flat = color_B.ravel()
-        view_count_flat = view_count.ravel()
+        valid_indices = (pixel_x >= 0) & (pixel_x < w) & (pixel_y >= 0) & (pixel_y < h)
 
-        sampled_colors = img[pixel_y_flat[in_bounds], pixel_x_flat[in_bounds]]
-        color_B_flat[in_bounds] += sampled_colors[:, 0]
-        color_G_flat[in_bounds] += sampled_colors[:, 1]
-        color_R_flat[in_bounds] += sampled_colors[:, 2]
-        view_count_flat[in_bounds] += 1
+        current_view_cone = np.zeros_like(voxel_matrix)
+        current_view_cone[valid_indices] = binary_mask_clean[pixel_y[valid_indices], pixel_x[valid_indices]]
+        voxel_matrix = voxel_matrix & current_view_cone
+
+        sampled_colors = img[pixel_y[valid_indices], pixel_x[valid_indices]]
+        color_B[valid_indices] += sampled_colors[:, 0]
+        color_G[valid_indices] += sampled_colors[:, 1]
+        color_R[valid_indices] += sampled_colors[:, 2]
+        view_count[valid_indices] += 1
 
     export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_path)
 
 def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_gltf_path):
-    """ Packs model with correct triangle winding order to fix the inside-out look. """
+    """ Outputs right-side out geometry with correct vertex normals. """
     if not np.any(voxel_matrix):
         print("[ERROR] Space carving collapsed completely. No geometry left to compile.")
         return
@@ -152,7 +111,7 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     smoothed_voxels = gaussian_filter(voxel_matrix.astype(float), sigma=1.0)
     verts, faces, _, _ = measure.marching_cubes(smoothed_voxels, level=0.5)
 
-    # Laplacian geometry smoothing pass to polish skin surfaces smoothly
+    # Geometry relaxation pass to soften vertical ribbing lines
     adjacency = [set() for _ in range(len(verts))]
     for face in faces:
         adjacency[face[0]].update([face[0], face[1], face[2]])
@@ -187,7 +146,6 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
         vy = int(np.clip(vert[1], 0, voxel_matrix.shape[1] - 1))
         vz = int(np.clip(vert[2], 0, voxel_matrix.shape[2] - 1))
         
-        # Scale coordinates cleanly using X-width as universal base unit metrics
         x = float(vx - center_x) / center_x
         y = float(vy - center_y) / center_x  
         z = float(vz - center_z) / center_z
@@ -203,8 +161,8 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
 
     f_buffer = bytearray()
     for face in faces:
-        # Standard counter-clockwise orientation turns the outer surface right-side out
-        f_buffer.extend(struct.pack("<III", int(face[0]), int(face[1]), int(face[2])))
+        # FIXED WINDING: Re-sequenced index elements to push the solid shell right-side out
+        f_buffer.extend(struct.pack("<III", int(face[2]), int(face[1]), int(face[0])))
         
     while len(f_buffer) % 4 != 0:
         f_buffer.extend(b'\x00')
@@ -234,8 +192,10 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     with open(output_gltf_path, 'w') as f:
         json.dump(gltf_dict, f, indent=2)
 
+    print(f"\n[COMPLETE] Proportional model saved to: {output_gltf_path}")
+
 if __name__ == "__main__":
     root = Path(__file__).parent
     frames_directory = root / 'sequence frames'
     output_model_file = root / 'output images' / 'reconstructed_body.gltf'
-    process_sequence_to_3d_hull(frames_directory, output_model_file, base_resolution=256)
+    process_sequence_to_3d_hull(frames_directory, output_model_file, base_resolution=256, thickness_scalar=1.3)

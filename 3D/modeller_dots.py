@@ -11,26 +11,20 @@ from rembg import remove
 
 def get_ai_silhouette(frame_path):
     """
-    Uses an AI background extraction model to preserve legs/feet 
-    even when they match the studio floor color closely.
+    Uses rembg to extract a clean binary mask.
     """
-    # Load image via PIL for rembg compatibility
     input_image = Image.open(frame_path)
     output_rgba = remove(input_image)
-    
-    # Convert alpha channel directly into a clean binary mask
     alpha = np.array(output_rgba)[:, :, 3]
     _, binary_mask = cv2.threshold(alpha, 10, 1, cv2.THRESH_BINARY)
     return binary_mask
 
 def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
     """
-    True 3D Visual Hull engine with proper non-cubic aspect ratio mapping.
-    Updated to preserve lower extremities using deep-learning segmentation models.
+    Voxel Carving Engine using stable orthographic math with aspect ratio mapping.
     """
     frames_dir = Path(frames_dir)
     
-    # Locate and sort files by indexing marker
     frame_files = sorted(
         frames_dir.glob("shot_*.png"), 
         key=lambda p: int(p.stem.split('_')[1])
@@ -40,12 +34,10 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
         print("[ERROR] No angle images found inside the target directory!")
         return
 
-    # Establish the true aspect ratio of your raw source slices
     sample_img = cv2.imread(str(frame_files[0]))
     raw_h, raw_w, _ = sample_img.shape
     aspect_ratio = raw_h / raw_w 
 
-    # Expand the vertical bounds of the rectangular workspace grid
     grid_res_x = base_resolution
     grid_res_z = base_resolution
     grid_res_y = int(base_resolution * aspect_ratio)  
@@ -55,13 +47,11 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
     
     voxel_matrix = np.ones((grid_res_x, grid_res_y, grid_res_z), dtype=bool)
     
-    # Color tracking spatial structures
     color_R = np.zeros_like(voxel_matrix, dtype=np.float32)
     color_G = np.zeros_like(voxel_matrix, dtype=np.float32)
     color_B = np.zeros_like(voxel_matrix, dtype=np.float32)
     view_count = np.zeros_like(voxel_matrix, dtype=np.int32)
 
-    # 3D Coordinate tracking bounds mapping 
     lin_x = np.linspace(-1, 1, grid_res_x)
     lin_y = np.linspace(-1, 1, grid_res_y)
     lin_z = np.linspace(-1, 1, grid_res_z)
@@ -69,8 +59,8 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
 
     for frame_path in frame_files:
         try:
-            i, yaw, pitch = frame_path.stem.split('_')[1:]
-            i, yaw, pitch = int(i), int(yaw), int(pitch)
+            parts = frame_path.stem.split('_')
+            i, yaw, pitch = int(parts[1]), int(parts[2]), int(parts[3])
         except (IndexError, ValueError):
             print(f" [SKIPPED] Cannot parse angle markers from filename: {frame_path.name}")
             continue
@@ -80,10 +70,9 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
         img = cv2.imread(str(frame_path))
         h, w, _ = img.shape
         
-        # New AI-driven extraction step instead of raw GrabCut
         binary_mask_clean = get_ai_silhouette(str(frame_path))
 
-        # Centroid Alignment (Horizontal + Vertical Fix)
+        # Centroid Alignment
         moments = cv2.moments((binary_mask_clean * 255).astype(np.uint8))
         if moments["m00"] != 0:
             actual_center_x = moments["m10"] / moments["m00"]
@@ -101,7 +90,7 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
         binary_mask_clean = cv2.warpAffine(binary_mask_clean, translation_matrix, (w, h), flags=cv2.INTER_NEAREST)
         img_centered = cv2.warpAffine(img, translation_matrix, (w, h), flags=cv2.INTER_LINEAR)
 
-        # Coordinate System projection loops
+        # Restored stable orthographic rotation equations
         yaw_rad = np.radians(yaw)
         pitch_rad = np.radians(pitch)
         
@@ -114,21 +103,17 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
 
         pitched_X = rotated_X
         pitched_Y = rotated_Y * cos_p + rotated_Z * sin_p   
-        pitched_Z = -rotated_Y * sin_p + rotated_Z * cos_p
 
-        pixel_x = ((pitched_X + 1) * 0.5 * (grid_res_x - 1)).astype(np.int32)
-        pixel_y = (((-pitched_Y + 1) * 0.5) * (grid_res_y - 1)).astype(np.int32)
+        pixel_x = ((pitched_X + 1) * 0.5 * (w - 1)).astype(np.int32)
+        pixel_y = (((-pitched_Y + 1) * 0.5) * (h - 1)).astype(np.int32)
 
-        valid_indices = (pixel_x >= 0) & (pixel_x < grid_res_x) & (pixel_y >= 0) & (pixel_y < grid_res_y)
-
-        resized_mask = cv2.resize(binary_mask_clean, (grid_res_x, grid_res_y), interpolation=cv2.INTER_NEAREST)
-        resized_color = cv2.resize(img_centered, (grid_res_x, grid_res_y), interpolation=cv2.INTER_LINEAR)
+        valid_indices = (pixel_x >= 0) & (pixel_x < w) & (pixel_y >= 0) & (pixel_y < h)
 
         current_view_cone = np.zeros_like(voxel_matrix)
-        current_view_cone[valid_indices] = resized_mask[pixel_y[valid_indices], pixel_x[valid_indices]]
+        current_view_cone[valid_indices] = binary_mask_clean[pixel_y[valid_indices], pixel_x[valid_indices]]
         voxel_matrix = voxel_matrix & current_view_cone
 
-        sampled_colors = resized_color[pixel_y[valid_indices], pixel_x[valid_indices]]
+        sampled_colors = img_centered[pixel_y[valid_indices], pixel_x[valid_indices]]
         color_B[valid_indices] += sampled_colors[:, 0]
         color_G[valid_indices] += sampled_colors[:, 1]
         color_R[valid_indices] += sampled_colors[:, 2]
@@ -136,40 +121,37 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
 
     export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_path)
 
-def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_gltf_path, apply_smoothing=True):
+def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_gltf_path):
     """
     Converts voxel coordinates to solid geometry and packs output as standard .gltf
-    Fixed: Adds mandatory 'min' and 'max' position accessor bounds arrays to clear validation errors.
+    Includes mesh geometry surface relaxation to remove vertical ribbing artifacts.
     """
     if not np.any(voxel_matrix):
         print("[ERROR] Space carving collapsed completely. No geometry left to compile.")
         return
 
-    # Soften voxel boundaries using a 3D Gaussian pass prior to extraction
-    smoothed_voxels = gaussian_filter(voxel_matrix.astype(float), sigma=1.0)
+    # Anti-aliasing pass prior to Marching Cubes
+    smoothed_voxels = gaussian_filter(voxel_matrix.astype(float), sigma=1.2)
     verts, faces, _, _ = measure.marching_cubes(smoothed_voxels, level=0.5)
 
-    # Optional: Mesh geometry surface smoothing pass to remove voxel staircasing lines
-    if apply_smoothing:
-        try:
-            # Create a simple vertex adjacency list to smoothly blur jagged edges
-            adj = [set() for _ in range(len(verts))]
-            for face in faces:
-                adj[face[0]].update([face[1], face[2]])
-                adj[face[1]].update([face[0], face[2]])
-                adj[face[2]].update([face[0], face[1]])
-            
-            # Perform 3 iterations of Laplacian relaxation smoothing
-            for _ in range(3):
-                new_verts = np.copy(verts)
-                for idx, neighbors in enumerate(adj):
-                    if neighbors:
-                        new_verts[idx] = np.mean(verts[list(neighbors)], axis=0)
-                verts = 0.7 * verts + 0.3 * new_verts  # Dampening factor to maintain volume
-        except Exception as e:
-            print(f" -> Mesh smoothing step bypassed due to optimization notice: {e}")
+    # --- GEOMETRY SMOOTHING LAYER ---
+    # Builds an adjacency map to execute Laplacian relaxation across jaggies
+    print("Executing surface relaxation to remove rib lines...")
+    adjacency = [set() for _ in range(len(verts))]
+    for face in faces:
+        adjacency[face[0]].update([face[1], face[2]])
+        adjacency[face[1]].update([face[0], face[2]])
+        adjacency[face[2]].update([face[0], face[1]])
+    
+    # 5 Iterations of spatial relaxation to smooth body surfaces smoothly
+    for _ in range(5):
+        relaxed_verts = np.copy(verts)
+        for idx, neighbors in enumerate(adjacency):
+            if neighbors:
+                relaxed_verts[idx] = np.mean(verts[list(neighbors)], axis=0)
+        verts = 0.6 * verts + 0.4 * relaxed_verts
 
-    print(f"Mesh compiled successfully! Packing {len(verts)} vertices and {len(faces)} faces into base64 streams...")
+    print(f"Mesh compiled! Packing {len(verts)} vertices into standard base64 streams...")
 
     final_R = np.zeros_like(color_R, dtype=np.uint8)
     final_G = np.zeros_like(color_G, dtype=np.uint8)
@@ -180,20 +162,16 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     final_G[valid_voxels] = (color_G[valid_voxels] / view_count[valid_voxels]).astype(np.uint8)
     final_B[valid_voxels] = (color_B[valid_voxels] / view_count[valid_voxels]).astype(np.uint8)
 
-    center_x = voxel_matrix.shape[0] / 2
-    center_y = voxel_matrix.shape[1] / 2
-    center_z = voxel_matrix.shape[2] / 2
+    center_x, center_y, center_z = voxel_matrix.shape[0]/2, voxel_matrix.shape[1]/2, voxel_matrix.shape[2]/2
 
-    # Tracking lists to dynamically calculate minimum/maximum coordinates
     processed_positions = []
-
     v_buffer = bytearray()
+    
     for vert in verts:
         vx = int(np.clip(vert[0], 0, voxel_matrix.shape[0] - 1))
         vy = int(np.clip(vert[1], 0, voxel_matrix.shape[1] - 1))
         vz = int(np.clip(vert[2], 0, voxel_matrix.shape[2] - 1))
         
-        # Scale indices to spatial coordinate dimensions
         x = float(vx - center_x) / center_x
         y = float(vy - center_y) / center_y
         z = float(vz - center_z) / center_z
@@ -205,15 +183,14 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
 
     v_len = len(v_buffer)
 
-    # Compute bounding arrays (Cast explicitly to python native floats for JSON compatibility)
+    # Compute bounding information required by Khronos glTF specification
     pos_array = np.array(processed_positions)
     min_bounds = pos_array.min(axis=0).tolist()
     max_bounds = pos_array.max(axis=0).tolist()
 
     f_buffer = bytearray()
     for face in faces:
-        idx0, idx1, idx2 = int(face[0]), int(face[1]), int(face[2])
-        f_buffer.extend(struct.pack("<III", idx0, idx1, idx2))
+        f_buffer.extend(struct.pack("<III", int(face[2]), int(face[1]), int(face[0])))
         
     while len(f_buffer) % 4 != 0:
         f_buffer.extend(b'\x00')
@@ -223,22 +200,13 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     b64_data = base64.b64encode(bin_buffer).decode('utf-8')
     data_uri = f"data:application/octet-stream;base64,{b64_data}"
 
-    # Re-compiled compliant dictionary layout containing mandatory spatial bounding info
     gltf_dict = {
         "asset": {"version": "2.0"},
         "scenes": [{"nodes": [0]}],
         "nodes": [{"mesh": 0}],
         "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2, "mode": 4}]}],
         "accessors": [
-            {
-                "bufferView": 0, 
-                "byteOffset": 0, 
-                "componentType": 5126, 
-                "count": len(verts), 
-                "type": "VEC3",
-                "min": min_bounds,
-                "max": max_bounds
-            },      
+            {"bufferView": 0, "byteOffset": 0, "componentType": 5126, "count": len(verts), "type": "VEC3", "min": min_bounds, "max": max_bounds},      
             {"bufferView": 0, "byteOffset": 12, "componentType": 5121, "count": len(verts), "type": "VEC4", "normalized": True}, 
             {"bufferView": 1, "byteOffset": 0, "componentType": 5125, "count": len(faces) * 3, "type": "SCALAR"} 
         ],
@@ -252,12 +220,10 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     with open(output_gltf_path, 'w') as f:
         json.dump(gltf_dict, f, indent=2)
 
-    print(f"\n[COMPLETE] Standard compliant .gltf mesh compiled!")
-    print(f"--> Saved output model directly to: {output_gltf_path}")
+    print(f"\n[COMPLETE] Clean, smooth mesh saved directly to: {output_gltf_path}")
 
 if __name__ == "__main__":
     root = Path(__file__).parent
-    frames_directory = root / 'sequence frames'
-    output_model_file = root / 'output images' / 'reconstructed_body.gltf'
-
+    frames_directory = root / 'results'
+    output_model_file = root / 'results' / 'reconstructed_body.gltf'
     process_sequence_to_3d_hull(frames_directory, output_model_file, base_resolution=256)

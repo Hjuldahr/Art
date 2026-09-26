@@ -77,14 +77,17 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256, th
         cos_y, sin_y = np.cos(yaw_rad), np.sin(yaw_rad)
         cos_p, sin_p = np.cos(pitch_rad), np.sin(pitch_rad)
         
-        # Robust orthographic tracking matrix math
+        # 1. First, rotate horizontally around the turntable (Yaw)
         rotated_X = X * cos_y - Z * sin_y
         rotated_Z = X * sin_y + Z * cos_y
-        rotated_Y = Y
-
+        
+        # 2. FIX THE ICICLE EFFECT: Remove the pitch component from the vertical axis.
+        # This forces the slicing planes to stay upright and straight rather than 
+        # slanting inward diagonally, keeping her legs completely parallel.
         pitched_X = rotated_X
-        pitched_Y = rotated_Y * cos_p + rotated_Z * sin_p   
+        pitched_Y = Y  
 
+        # 3. Project directly onto your 180x400 image plane matrix coordinates
         pixel_x = ((pitched_X + 1) * 0.5 * (w - 1)).astype(np.int32)
         pixel_y = (((-pitched_Y + 1) * 0.5) * (h - 1)).astype(np.int32)
 

@@ -1,0 +1,84 @@
+[
+    {
+        "input_filename": "034c6205df3965925dabf345510e2325.jpg",
+        "output_file_pattern": "%_woman_turnaround.png",
+        "x_offset": 0,
+        "y_offset": 40,
+        "frame_width": 180,
+        "frame_height": 400
+    },
+    [
+        {
+            "cam_yaw": 0,
+            "cam_pitch": 0,
+            "x_target": 66,
+            "y_target": 152
+        },
+        {
+            "cam_yaw": 30,
+            "cam_pitch": 0,
+            "x_target": 252,
+            "y_target": 153
+        },
+        {
+            "cam_yaw": 60,
+            "cam_pitch": 0,
+            "x_target": 425,
+            "y_target": 153
+        },
+        {
+            "cam_yaw": 90,
+            "cam_pitch": 0,
+            "x_target": 594,
+            "y_target": 149
+        },
+        {
+            "cam_yaw": 120,
+            "cam_pitch": 0,
+            "x_target": 70,
+            "y_target": 541
+        },
+        {
+            "cam_yaw": 150,
+            "cam_pitch": 0,
+            "x_target": 262,
+            "y_target": 540
+        },
+        {
+            "cam_yaw": 180,
+            "cam_pitch": 0,
+            "x_target": 432,
+            "y_target": 542
+        },
+        {
+            "cam_yaw": 210,
+            "cam_pitch": 0,
+            "x_target": 586,
+            "y_target": 539
+        },
+        {
+            "cam_yaw": 240,
+            "cam_pitch": 0,
+            "x_target": 59,
+            "y_target": 941
+        },
+        {
+            "cam_yaw": 270,
+            "cam_pitch": 0,
+            "x_target": 233,
+            "y_target": 938
+        },
+        {
+            "cam_yaw": 300,
+            "cam_pitch": 0,
+            "x_target": 400,
+            "y_target": 937
+        },
+        {
+            "cam_yaw": 330,
+            "cam_pitch": 0,
+            "x_target": 584,
+            "y_target": 944
+        }
+    ]
+]

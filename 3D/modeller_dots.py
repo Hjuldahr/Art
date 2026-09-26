@@ -136,18 +136,40 @@ def process_sequence_to_3d_hull(frames_dir, output_path, base_resolution=256):
 
     export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_path)
 
-def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_gltf_path):
+def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view_count, output_gltf_path, apply_smoothing=True):
     """
     Converts voxel coordinates to solid geometry and packs output as standard .gltf
+    Fixed: Adds mandatory 'min' and 'max' position accessor bounds arrays to clear validation errors.
     """
-    # CRITICAL FIX: Removed the bottom 4% absolute vertical clipper array deletion pass
-    # This prevents the feet/calves from being sliced out of the final mesh structure.
+    if not np.any(voxel_matrix):
+        print("[ERROR] Space carving collapsed completely. No geometry left to compile.")
+        return
 
-    # Soften the voxel boundaries using a slight 3D Gaussian pass
+    # Soften voxel boundaries using a 3D Gaussian pass prior to extraction
     smoothed_voxels = gaussian_filter(voxel_matrix.astype(float), sigma=1.0)
     verts, faces, _, _ = measure.marching_cubes(smoothed_voxels, level=0.5)
 
-    print(f"Smooth mesh compiled! Packing {len(verts)} vertices and {len(faces)} faces into base64 streams...")
+    # Optional: Mesh geometry surface smoothing pass to remove voxel staircasing lines
+    if apply_smoothing:
+        try:
+            # Create a simple vertex adjacency list to smoothly blur jagged edges
+            adj = [set() for _ in range(len(verts))]
+            for face in faces:
+                adj[face[0]].update([face[1], face[2]])
+                adj[face[1]].update([face[0], face[2]])
+                adj[face[2]].update([face[0], face[1]])
+            
+            # Perform 3 iterations of Laplacian relaxation smoothing
+            for _ in range(3):
+                new_verts = np.copy(verts)
+                for idx, neighbors in enumerate(adj):
+                    if neighbors:
+                        new_verts[idx] = np.mean(verts[list(neighbors)], axis=0)
+                verts = 0.7 * verts + 0.3 * new_verts  # Dampening factor to maintain volume
+        except Exception as e:
+            print(f" -> Mesh smoothing step bypassed due to optimization notice: {e}")
+
+    print(f"Mesh compiled successfully! Packing {len(verts)} vertices and {len(faces)} faces into base64 streams...")
 
     final_R = np.zeros_like(color_R, dtype=np.uint8)
     final_G = np.zeros_like(color_G, dtype=np.uint8)
@@ -162,25 +184,35 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     center_y = voxel_matrix.shape[1] / 2
     center_z = voxel_matrix.shape[2] / 2
 
+    # Tracking lists to dynamically calculate minimum/maximum coordinates
+    processed_positions = []
+
     v_buffer = bytearray()
     for vert in verts:
         vx = int(np.clip(vert[0], 0, voxel_matrix.shape[0] - 1))
         vy = int(np.clip(vert[1], 0, voxel_matrix.shape[1] - 1))
         vz = int(np.clip(vert[2], 0, voxel_matrix.shape[2] - 1))
         
-        # Scale into spatial coordinate positions
-        x = float(vx - center_x)
-        y = float(vy - center_y)
-        z = float(vz - center_z)
+        # Scale indices to spatial coordinate dimensions
+        x = float(vx - center_x) / center_x
+        y = float(vy - center_y) / center_y
+        z = float(vz - center_z) / center_z
+        
+        processed_positions.append([x, y, z])
         
         r, g, b = final_R[vx, vy, vz], final_G[vx, vy, vz], final_B[vx, vy, vz]
         v_buffer.extend(struct.pack("<fffBBBB", x, y, z, r, g, b, 255))
 
     v_len = len(v_buffer)
 
+    # Compute bounding arrays (Cast explicitly to python native floats for JSON compatibility)
+    pos_array = np.array(processed_positions)
+    min_bounds = pos_array.min(axis=0).tolist()
+    max_bounds = pos_array.max(axis=0).tolist()
+
     f_buffer = bytearray()
     for face in faces:
-        idx0, idx1, idx2 = int(face[2]), int(face[1]), int(face[0])
+        idx0, idx1, idx2 = int(face[0]), int(face[1]), int(face[2])
         f_buffer.extend(struct.pack("<III", idx0, idx1, idx2))
         
     while len(f_buffer) % 4 != 0:
@@ -191,13 +223,22 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     b64_data = base64.b64encode(bin_buffer).decode('utf-8')
     data_uri = f"data:application/octet-stream;base64,{b64_data}"
 
+    # Re-compiled compliant dictionary layout containing mandatory spatial bounding info
     gltf_dict = {
         "asset": {"version": "2.0"},
         "scenes": [{"nodes": [0]}],
         "nodes": [{"mesh": 0}],
         "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 1}, "indices": 2, "mode": 4}]}],
         "accessors": [
-            {"bufferView": 0, "byteOffset": 0, "componentType": 5126, "count": len(verts), "type": "VEC3"},      
+            {
+                "bufferView": 0, 
+                "byteOffset": 0, 
+                "componentType": 5126, 
+                "count": len(verts), 
+                "type": "VEC3",
+                "min": min_bounds,
+                "max": max_bounds
+            },      
             {"bufferView": 0, "byteOffset": 12, "componentType": 5121, "count": len(verts), "type": "VEC4", "normalized": True}, 
             {"bufferView": 1, "byteOffset": 0, "componentType": 5125, "count": len(faces) * 3, "type": "SCALAR"} 
         ],
@@ -211,7 +252,8 @@ def export_voxels_to_standard_gltf(voxel_matrix, color_R, color_G, color_B, view
     with open(output_gltf_path, 'w') as f:
         json.dump(gltf_dict, f, indent=2)
 
-    print(f"\n[COMPLETE] Model saved directly to: {output_gltf_path}")
+    print(f"\n[COMPLETE] Standard compliant .gltf mesh compiled!")
+    print(f"--> Saved output model directly to: {output_gltf_path}")
 
 if __name__ == "__main__":
     root = Path(__file__).parent

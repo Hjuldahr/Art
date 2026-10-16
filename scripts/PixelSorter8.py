@@ -3,9 +3,9 @@ import os
 from colorsys import hsv_to_rgb, rgb_to_hsv
 from PIL import Image
 
-FILENAME = '360_F_369634160_Pv5jIedHbMhEoCeaL4GwXYky3Ij0QY1f.jpg'
+FILENAME = 'classical-art-inspiration.png'
 
-parent_path = os.path.join(os.path.dirname(__file__))
+parent_path = os.path.join(os.path.dirname(__file__), '..')
 IN_PATH = os.path.join(parent_path, 'Source Images', FILENAME)
 OUT_PATH = os.path.join(parent_path, 'Generated Gifs', FILENAME.split('.')[0] + '_pixelsorted.gif')
 

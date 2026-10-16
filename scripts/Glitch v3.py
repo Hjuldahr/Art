@@ -295,6 +295,7 @@ def glitch_pipeline(source_image_path, source_dir, iterations=16, output_dir='./
 # Example usage
 # -----------------------------
 if __name__ == '__main__':
-    source_dir = './Art/Source Images'
-    source_image_path = os.path.join(source_dir, '07l679a8co411.jpg')
-    glitch_pipeline(source_image_path, source_dir)
+    source_dir = '../Source Images'
+    source_image_path = os.path.join(source_dir, 'classical-art-inspiration.png')
+    output_dir = '../Generated Images/Glitch Art'
+    glitch_pipeline(source_image_path, source_dir, 4, output_dir)

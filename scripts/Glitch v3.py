@@ -188,8 +188,7 @@ def checkerboarding_stripes(old_image, other_images, block_count, block_size, ba
     new_image = old_image.copy()
     pixels = new_image.load()
 
-    points = [(x,y) for x in range(0,width-block_size,block_size)
-                       for y in range(0,height-block_size,block_size)]
+    points = [(x,y) for x in range(0,width-block_size,block_size) for y in range(0,height-block_size,block_size)]
     chosen = r.sample(points, block_count)
 
     for x0,y0 in chosen:
